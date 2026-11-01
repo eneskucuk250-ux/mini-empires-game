@@ -1,0 +1,1490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mini Empires 2.8</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;padding:7px;background:#101820;color:#eee;font:13px Arial,sans-serif}
+h1{color:#70d6a5;text-align:center;font-size:22px}
+h2{color:#70d6a5;font-size:16px}
+.panel{background:#1c2a35;border:1px solid #40515d;border-radius:6px;padding:8px;margin:7px 0}
+.stats{display:flex;flex-wrap:wrap;gap:5px}
+.stat{background:#263b48;padding:7px;border-radius:4px;flex:1 1 40%}
+button{background:#287b5b;color:white;border:0;border-radius:5px;padding:9px 5px;margin:3px 0;font-size:13px;width:100%;min-height:35px}
+button:disabled{opacity:.4}
+input{width:100%;padding:10px;margin:4px 0;background:#12232e;color:white;border:1px solid #526575;border-radius:4px}
+.small{color:#b8c7ce;font-size:11px}
+#map,#regionalMap{background:#142b3a;border-radius:5px;overflow:hidden}
+#map svg,#regionalMap svg{width:100%;height:auto;display:block}
+#log{font-size:11px;line-height:1.5;max-height:140px;overflow-y:auto;overflow-wrap:anywhere}
+.mapHint{color:#b8c7ce;font-size:11px;text-align:center;padding:12px}
+.good{color:#70d6a5}.warn{color:#ffe66d}
+</style>
+</head>
+<body>
+
+<h1>MINI EMPIRES</h1>
+<p class="small" style="text-align:center">WORLD STRATEGY GAME 2.8 — MULTIPLAYER</p>
+
+<div class="panel" id="roomPanel">
+<h2>Multiplayer Room</h2>
+<input id="playerName" maxlength="18" placeholder="Your player name">
+<button onclick="createRoom()">CREATE NEW ROOM</button>
+<input id="roomCode" maxlength="4" inputmode="numeric" placeholder="Enter 4-digit room code">
+<button onclick="joinRoom()">JOIN ROOM</button>
+<p id="connectionStatus" class="small">Connecting to Firebase...</p>
+<div id="roomInfo"></div>
+</div>
+
+<div id="gameArea" style="display:none">
+
+<div class="panel">
+<h2 id="countryTitle">Your Country</h2>
+<div class="stats">
+<div class="stat">Money: <b id="money"></b></div>
+<div class="stat">Regions: <b id="regionCount"></b></div>
+<div class="stat">Influence: <b id="influence"></b></div>
+<div class="stat">Round: <b id="turn"></b></div>
+<div class="stat">Technology: <b id="technology"></b></div>
+<div class="stat">Defence: <b id="defence"></b></div>
+</div>
+<p class="small">Income per round: <b id="income"></b></p>
+<p id="turnStatus" class="warn"></p>
+</div>
+
+<div class="panel">
+<h2>Political World Map</h2>
+<div id="map"><p class="mapHint">Loading world map...</p></div>
+<p class="small">Red: Player countries | Blue: AI countries | Orange: Conquered</p>
+</div>
+
+<div class="panel">
+<h2 id="regionalTitle">Regional Map</h2>
+<div id="regionalMap"></div>
+</div>
+
+<div class="panel">
+<h2>Selected Region</h2>
+<div id="regionInfo">Select a region.</div>
+<button onclick="developSelected()">Develop Region (120 money)</button>
+<button onclick="claimRegion()">Gain New Region (25 influence + 150 money)</button>
+</div>
+
+<div class="panel">
+<h2>Country Actions</h2>
+<button onclick="recruit()">Gain Influence (80 money)</button>
+<button onclick="upgradeTechnology()">Improve Technology (180 money)</button>
+<button onclick="upgradeDefence()">Improve Defence (150 money)</button>
+<button onclick="finishTurn()">END YOUR TURN</button>
+</div>
+
+<div class="panel">
+<h2>Diplomacy</h2>
+<div id="countries"></div>
+<div id="diplomacyActions">Select a country.</div>
+</div>
+
+<div class="panel">
+<h2>War Room</h2>
+<div id="warInfo">No active war.</div>
+</div>
+
+<div class="panel">
+<h2>Save &amp; Load</h2>
+<button onclick="saveRoom()">SAVE ROOM</button>
+<p id="saveStatus" class="small">Game synchronizes automatically.</p>
+</div>
+
+<div class="panel">
+<h2>Game Events</h2>
+<div id="log">Welcome to Mini Empires 2.8!</div>
+</div>
+
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+<script>
+
+/* FIREBASE CONFIGURATION */
+
+var firebaseConfig={
+apiKey:"AIzaSyCeifcY_UlWMPd-_S7FwSVF_T23_92StJA",
+authDomain:"miniempires-fb578.firebaseapp.com",
+databaseURL:"https://miniempires-fb578-default-rtdb.europe-west1.firebasedatabase.app",
+projectId:"miniempires-fb578",
+storageBucket:"miniempires-fb578.firebasestorage.app",
+messagingSenderId:"695021094873",
+appId:"1:695021094873:web:90a84fa641eb82e8997bc8"
+};
+
+var auth=null;
+var db=null;
+var uid=null;
+var roomId=null;
+var roomRef=null;
+var game=null;
+var mySlot=-1;
+var selectedRegion=0;
+var selectedCountry=-1;
+
+var PLAYER_COUNTRIES=["Türkiye","Germany","Iran","Russia"];
+
+
+/* COUNTRY REGION DATA */
+
+var REGION_NAMES={
+"Türkiye":[
+"Istanbul","Ankara","Izmir","Erzurum","Antalya",
+"Bursa","Adana","Konya","Trabzon","Gaziantep",
+"Samsun","Diyarbakir","Kayseri","Mugla","Van",
+"Eskisehir","Mersin","Malatya","Sivas","Ordu",
+"Kars","Aydin","Balikesir","Manisa","Rize"
+],
+"Germany":[
+"Berlin","Hamburg","Munich","Cologne","Frankfurt",
+"Stuttgart","Dresden","Leipzig","Bremen","Hanover",
+"Nuremberg","Dortmund"
+],
+"Iran":[
+"Tehran","Mashhad","Isfahan","Tabriz","Shiraz",
+"Ahvaz","Qom","Kermanshah","Urmia","Rasht",
+"Yazd","Kerman","Bandar Abbas","Arak"
+],
+"Russia":[
+"Moscow","Saint Petersburg","Kazan","Sochi","Novosibirsk",
+"Yekaterinburg","Samara","Omsk","Rostov","Vladivostok",
+"Murmansk","Volgograd","Perm","Ufa"
+]
+};
+
+
+/* COUNTRY STARTING VALUES
+   name, region count, money, influence, technology, defence
+*/
+
+var COUNTRY_DATA=[
+["Türkiye",15,500,20,1,1],
+["Germany",8,650,25,3,2],
+["Iran",12,550,22,2,2],
+["Russia",12,600,20,2,3],
+["Greece",5,65,0,1,1],
+["Bulgaria",4,55,0,1,1],
+["Georgia",3,45,0,1,1],
+["Armenia",2,35,0,1,1],
+["Azerbaijan",3,45,0,1,1],
+["Iraq",6,65,0,1,1],
+["Syria",4,40,0,1,1],
+["France",7,90,0,2,2],
+["Italy",6,85,0,2,1],
+["Spain",6,75,0,2,1],
+["United Kingdom",7,95,0,3,2],
+["China",15,130,0,2,2],
+["Japan",5,90,0,3,1]
+];
+
+
+/* GAME VARIABLES */
+
+var worldFeatures=[];
+var worldMapReady=false;
+var worldMapError=false;
+
+
+/* HELPER FUNCTIONS */
+
+function setStatus(message){
+document.getElementById("connectionStatus").textContent=message;
+}
+
+function safeText(value){
+return String(value)
+.replace(/&/g,"&amp;")
+.replace(/</g,"&lt;")
+.replace(/>/g,"&gt;")
+.replace(/"/g,"&quot;");
+}
+
+function addLog(g,message){
+g.log=g.log||[];
+g.log.unshift("Round "+g.round+": "+message);
+if(g.log.length>35)g.log.length=35;
+}
+
+function makeCountry(row,index){
+
+var name=row[0];
+var names=REGION_NAMES[name]||[];
+var regions=[];
+
+for(var i=0;i<row[1];i++){
+regions.push({
+name:names[i]||("Region "+(i+1)),
+population:1000,
+development:1,
+income:15
+});
+}
+
+return {
+name:name,
+regions:regions,
+money:row[2],
+influence:row[3],
+technology:row[4],
+defence:row[5],
+relation:{},
+allies:[],
+traded:false,
+owner:index<4?"player":"ai",
+strategy:index%3===0?"economy":
+(index%3===1?"defence":"balanced")
+};
+
+}
+
+function initialGame(){
+
+var countries=[];
+
+for(var i=0;i<COUNTRY_DATA.length;i++){
+countries.push(makeCountry(COUNTRY_DATA[i],i));
+}
+
+return {
+version:28,
+round:1,
+turnIndex:0,
+players:{},
+countries:countries,
+war:null,
+log:["A new Mini Empires multiplayer game has begun."]
+};
+
+}
+
+
+/* FIREBASE INITIALIZATION */
+
+function initFirebase(){
+
+try{
+
+firebase.initializeApp(firebaseConfig);
+
+auth=firebase.auth();
+db=firebase.database();
+
+auth.signInAnonymously().then(function(credential){
+
+uid=credential.user.uid;
+setStatus("Connected! Create a room or join with a code.");
+
+}).catch(function(error){
+
+setStatus("Firebase sign-in error: "+error.message);
+
+});
+
+}catch(error){
+
+setStatus("Firebase initialization error: "+error.message);
+
+}
+
+}
+
+
+/* ROOM CREATION */
+
+function createRoom(){
+
+if(!uid){
+setStatus("Please wait for Firebase connection.");
+return;
+}
+
+var playerName=(document.getElementById("playerName").value||"Player 1").trim().slice(0,18);
+var code=String(Math.floor(1000+Math.random()*9000));
+var ref=db.ref("rooms/"+code);
+
+ref.transaction(function(old){
+
+if(old!==null)return;
+
+var newGame=initialGame();
+
+newGame.players={};
+newGame.players[uid]={
+name:playerName,
+country:"Türkiye",
+slot:0
+};
+
+return {
+createdAt:firebase.database.ServerValue.TIMESTAMP,
+host:uid,
+state:newGame
+};
+
+},function(error,committed,snapshot){
+
+if(error){
+setStatus("Room creation failed: "+error.message);
+return;
+}
+
+if(!committed){
+setStatus("That room code already exists. Try again.");
+return;
+}
+
+document.getElementById("roomCode").value=code;
+enterRoom(code,0);
+
+});
+
+}
+
+
+/* JOIN ROOM */
+
+function joinRoom(){
+
+if(!uid){
+setStatus("Please wait for Firebase connection.");
+return;
+}
+
+var code=(document.getElementById("roomCode").value||"").replace(/\D/g,"").slice(0,4);
+
+if(code.length!==4){
+setStatus("Please enter a 4-digit room code.");
+return;
+}
+
+var playerName=(document.getElementById("playerName").value||"Player").trim().slice(0,18);
+var ref=db.ref("rooms/"+code);
+
+ref.transaction(function(old){
+
+if(!old||!old.state)return;
+
+var g=old.state;
+
+if(g.players&&g.players[uid])return old;
+
+var used={};
+
+for(var key in (g.players||{})){
+used[g.players[key].slot]=true;
+}
+
+var slot=-1;
+
+for(var i=0;i<4;i++){
+if(!used[i]){
+slot=i;
+break;
+}
+}
+
+if(slot<0)return;
+
+g.players=g.players||{};
+
+g.players[uid]={
+name:playerName,
+country:PLAYER_COUNTRIES[slot],
+slot:slot
+};
+
+old.state=g;
+
+return old;
+
+},function(error,committed,snapshot){
+
+if(error){
+setStatus("Could not join room: "+error.message);
+return;
+}
+
+if(!committed){
+setStatus("Room not found or all four player seats are occupied.");
+return;
+}
+
+var player=snapshot.val().state.players[uid];
+enterRoom(code,player.slot);
+
+});
+
+}
+
+
+/* CONNECT TO ROOM */
+
+function enterRoom(code,slot){
+
+roomId=code;
+mySlot=slot;
+roomRef=db.ref("rooms/"+code);
+
+roomRef.on("value",function(snapshot){
+
+var data=snapshot.val();
+
+if(!data||!data.state){
+setStatus("Room data could not be loaded.");
+return;
+}
+
+game=data.state;
+
+if(game.players&&game.players[uid]){
+mySlot=game.players[uid].slot;
+}
+
+renderGame();
+
+});
+
+document.getElementById("gameArea").style.display="block";
+setStatus("Connected to room "+code+". Country: "+PLAYER_COUNTRIES[mySlot]);
+
+}
+
+
+/* CURRENT PLAYER HELPERS */
+
+function currentCountry(){
+
+if(!game||mySlot<0)return null;
+
+return game.countries[mySlot]||null;
+
+}
+
+function isMyTurn(){
+
+return !!game&&
+game.turnIndex===mySlot&&
+!!game.players&&
+!!game.players[uid];
+
+}
+
+function totalIncome(country){
+
+var total=0;
+
+for(var i=0;i<country.regions.length;i++){
+total+=Number(country.regions[i].income)||0;
+}
+
+return total;
+
+}
+
+
+/* SHARED DATABASE UPDATE */
+
+function updateRoom(mutator){
+
+if(!roomRef||!uid)return;
+
+roomRef.child("state").transaction(function(state){
+
+if(!state||!state.players||!state.players[uid])return;
+
+mutator(state);
+
+return state;
+
+},function(error){
+
+if(error){
+setStatus("Synchronization error: "+error.message);
+}
+
+});
+
+}
+/* GAME INTERFACE */
+
+function renderGame(){
+
+if(!game)return;
+
+var me=currentCountry();
+if(!me)return;
+
+document.getElementById("gameArea").style.display="block";
+
+document.getElementById("countryTitle").textContent=
+"Your Country: "+me.name;
+
+document.getElementById("money").textContent=me.money;
+document.getElementById("regionCount").textContent=me.regions.length;
+document.getElementById("influence").textContent=me.influence;
+document.getElementById("turn").textContent=game.round;
+document.getElementById("technology").textContent=me.technology;
+document.getElementById("defence").textContent=me.defence;
+document.getElementById("income").textContent=totalIncome(me);
+
+var turnPlayer=null;
+
+for(var id in game.players){
+
+if(game.players[id].slot===game.turnIndex){
+turnPlayer=game.players[id];
+}
+
+}
+
+document.getElementById("turnStatus").textContent=
+isMyTurn()
+?"YOUR TURN — You can make your moves."
+:(turnPlayer
+?turnPlayer.name+" ("+turnPlayer.country+") is playing."
+:"Waiting for the next player.");
+
+var roomHTML="<p><b>Room code: "+roomId+"</b></p>";
+
+for(var i=0;i<4;i++){
+
+var found="Waiting for player";
+
+for(var key in game.players){
+
+if(game.players[key].slot===i){
+found=safeText(game.players[key].name);
+}
+
+}
+
+roomHTML+="<p class='small'>"+(i+1)+". "+
+PLAYER_COUNTRIES[i]+": "+found+"</p>";
+
+}
+
+document.getElementById("roomInfo").innerHTML=roomHTML;
+
+drawRegionalMap();
+updateRegionInfo();
+drawWorldMap();
+renderCountries();
+updateWarInfo();
+renderLog();
+
+var buttons=document.querySelectorAll(
+"#gameArea button"
+);
+
+for(var b=0;b<buttons.length;b++){
+
+buttons[b].disabled=!isMyTurn();
+
+}
+
+}
+
+
+/* EVENT LOG */
+
+function renderLog(){
+
+var html="";
+var entries=game.log||[];
+
+for(var i=0;i<entries.length;i++){
+html+=safeText(entries[i])+"<br>";
+}
+
+document.getElementById("log").innerHTML=html;
+
+}
+
+
+/* REGIONAL MAP */
+
+function drawRegionalMap(){
+
+var country=currentCountry();
+
+if(!country)return;
+
+var svg='<svg viewBox="0 0 300 190" xmlns="http://www.w3.org/2000/svg">';
+
+svg+='<path d="M20 45 L75 12 L145 25 L250 35 L280 85 L245 145 L165 175 L70 160 L25 115 Z" fill="#526c61" stroke="#81958a" stroke-width="2"/>';
+
+for(var i=0;i<country.regions.length;i++){
+
+var x=28+(i%6)*48;
+var y=38+Math.floor(i/6)*48;
+
+var color=selectedRegion===i?"#ffe66d":"#e85b5b";
+
+svg+='<circle cx="'+x+'" cy="'+y+
+'" r="8" fill="'+color+
+'" stroke="white" stroke-width="1" onclick="selectRegion('+i+')"/>';
+
+svg+='<text x="'+(x+9)+'" y="'+(y-5)+
+'" fill="white" font-size="8">'+
+safeText(country.regions[i].name)+'</text>';
+
+}
+
+svg+='</svg>';
+
+document.getElementById("regionalMap").innerHTML=svg;
+
+}
+
+
+function selectRegion(index){
+
+selectedRegion=index;
+
+drawRegionalMap();
+updateRegionInfo();
+
+}
+
+
+function updateRegionInfo(){
+
+var country=currentCountry();
+
+if(!country||country.regions.length===0){
+
+document.getElementById("regionInfo").textContent="No regions.";
+return;
+
+}
+
+if(selectedRegion<0||selectedRegion>=country.regions.length){
+selectedRegion=0;
+}
+
+var r=country.regions[selectedRegion];
+
+document.getElementById("regionInfo").innerHTML=
+"<h2>"+safeText(r.name)+"</h2>"+
+"<p>Population: "+Number(r.population).toLocaleString()+" thousand</p>"+
+"<p>Development: Level "+r.development+"</p>"+
+"<p>Income: "+r.income+"</p>";
+
+}
+
+
+/* WORLD MAP */
+
+function drawWorldMap(){
+
+var box=document.getElementById("map");
+
+if(!worldMapReady){
+
+box.innerHTML=worldMapError
+?'<p class="mapHint">World map unavailable. The rest of the game still works.</p>'
+:'<p class="mapHint">Loading world map...</p>';
+
+return;
+
+}
+
+var svg='<svg viewBox="0 0 960 500" xmlns="http://www.w3.org/2000/svg">';
+svg+='<rect width="960" height="500" fill="#142b3a"/>';
+
+function project(point){
+
+return [
+(point[0]+180)*960/360,
+(90-point[1])*500/180
+];
+
+}
+
+function ringPath(ring){
+
+if(!ring||ring.length<3)return "";
+
+var p=project(ring[0]);
+
+var d="M"+p[0].toFixed(1)+","+p[1].toFixed(1);
+
+for(var i=1;i<ring.length;i++){
+
+p=project(ring[i]);
+
+d+=" L"+p[0].toFixed(1)+","+p[1].toFixed(1);
+
+}
+
+return d+" Z";
+
+}
+
+function geometryPath(geometry){
+
+var d="";
+
+if(geometry.type==="Polygon"){
+
+for(var i=0;i<geometry.coordinates.length;i++){
+d+=ringPath(geometry.coordinates[i])+" ";
+}
+
+}
+
+if(geometry.type==="MultiPolygon"){
+
+for(var j=0;j<geometry.coordinates.length;j++){
+
+for(var k=0;k<geometry.coordinates[j].length;k++){
+d+=ringPath(geometry.coordinates[j][k])+" ";
+}
+
+}
+
+}
+
+return d;
+
+}
+
+var aliases={
+"Turkey":"Türkiye",
+"Türkiye":"Türkiye",
+"Russian Federation":"Russia"
+};
+
+for(var i=0;i<worldFeatures.length;i++){
+
+var feature=worldFeatures[i];
+
+var originalName=
+feature.properties.ADMIN||
+feature.properties.name||
+"Unknown";
+
+if(originalName==="Antarctica")continue;
+
+var name=aliases[originalName]||originalName;
+var color="#527d68";
+
+for(var j=0;j<game.countries.length;j++){
+
+var c=game.countries[j];
+
+if(c.name===name){
+
+if(c.owner==="player"){
+color="#e85b5b";
+}
+else if(c.owner==="conquered"){
+color="#d69a45";
+}
+else{
+color="#5ca6dc";
+}
+
+break;
+
+}
+
+}
+
+var path=geometryPath(feature.geometry);
+
+svg+='<path d="'+path+
+'" fill="'+color+
+'" stroke="#d5e0dc" stroke-width="0.8" stroke-linejoin="round">';
+
+svg+='<title>'+safeText(name)+'</title></path>';
+
+}
+
+svg+='</svg>';
+
+box.innerHTML=svg;
+
+}
+
+
+/* LOAD WORLD MAP */
+
+function loadWorldMap(){
+
+var url="https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson";
+
+if(typeof XMLHttpRequest==="undefined"){
+
+worldMapError=true;
+drawWorldMap();
+return;
+
+}
+
+var request=new XMLHttpRequest();
+
+request.onreadystatechange=function(){
+
+if(request.readyState===4){
+
+if(request.status>=200&&request.status<300){
+
+try{
+
+var data=JSON.parse(request.responseText);
+
+worldFeatures=data.features||[];
+worldMapReady=worldFeatures.length>0;
+worldMapError=!worldMapReady;
+
+}catch(e){
+
+worldMapError=true;
+
+}
+
+}else{
+
+worldMapError=true;
+
+}
+
+if(game)drawWorldMap();
+
+}
+
+};
+
+try{
+
+request.open("GET",url,true);
+request.send();
+
+}catch(e){
+
+worldMapError=true;
+drawWorldMap();
+
+}
+
+}
+
+
+/* PLAYER ACTION SYSTEM */
+
+function playerAction(callback){
+
+if(!isMyTurn()){
+
+alert("It is not your turn.");
+return;
+
+}
+
+updateRoom(function(g){
+
+var country=g.countries[mySlot];
+
+callback(g,country);
+
+});
+
+}
+
+
+/* DEVELOP REGION */
+
+function developSelected(){
+
+playerAction(function(g,country){
+
+var r=country.regions[selectedRegion];
+
+if(!r||country.money<120){
+
+addLog(g,"Not enough money to develop this region.");
+return;
+
+}
+
+country.money-=120;
+r.development++;
+r.income+=10;
+
+addLog(g,country.name+" developed "+r.name+".");
+
+});
+
+}
+
+
+/* GAIN NEW REGION */
+
+function claimRegion(){
+
+playerAction(function(g,country){
+
+var names=REGION_NAMES[country.name]||[];
+
+if(country.money<150||country.influence<25){
+
+addLog(g,"You need 150 money and 25 influence.");
+return;
+
+}
+
+if(country.regions.length>=names.length){
+
+addLog(g,"No more available regions.");
+return;
+
+}
+
+country.money-=150;
+country.influence-=25;
+
+var name=names[country.regions.length]||
+("Region "+(country.regions.length+1));
+
+country.regions.push({
+name:name,
+population:700,
+development:1,
+income:15
+});
+
+addLog(g,country.name+" gained "+name+".");
+
+});
+
+}
+
+
+/* INFLUENCE */
+
+function recruit(){
+
+playerAction(function(g,country){
+
+if(country.money<80){
+
+addLog(g,"Not enough money.");
+return;
+
+}
+
+country.money-=80;
+country.influence+=10;
+
+addLog(g,country.name+" gained 10 influence.");
+
+});
+
+}
+
+
+/* TECHNOLOGY */
+
+function upgradeTechnology(){
+
+playerAction(function(g,country){
+
+if(country.money<180){
+
+addLog(g,"Not enough money for technology.");
+return;
+
+}
+
+country.money-=180;
+country.technology++;
+
+addLog(g,country.name+" improved technology to level "+
+country.technology+".");
+
+});
+
+}
+
+
+/* DEFENCE */
+
+function upgradeDefence(){
+
+playerAction(function(g,country){
+
+if(country.money<150){
+
+addLog(g,"Not enough money for defence.");
+return;
+
+}
+
+country.money-=150;
+country.defence++;
+
+addLog(g,country.name+" improved defence to level "+
+country.defence+".");
+
+});
+
+}
+
+
+/* DIPLOMACY LIST */
+
+function renderCountries(){
+
+var box=document.getElementById("countries");
+
+box.innerHTML="";
+
+for(var i=0;i<game.countries.length;i++){
+
+(function(index){
+
+var c=game.countries[index];
+
+var button=document.createElement("button");
+
+button.textContent=
+c.name+" — "+c.regions.length+" regions"+
+(c.owner==="player"?" (Player)":" (AI)");
+
+button.onclick=function(){
+
+selectedCountry=index;
+updateDiplomacy();
+
+};
+
+box.appendChild(button);
+
+})(i);
+
+}
+
+updateDiplomacy();
+
+}
+
+
+function updateDiplomacy(){
+
+var box=document.getElementById("diplomacyActions");
+
+if(selectedCountry<0||!game.countries[selectedCountry]){
+
+box.innerHTML="<p>Select a country.</p>";
+return;
+
+}
+
+var c=game.countries[selectedCountry];
+var me=currentCountry();
+
+var allied=me.allies.indexOf(c.name)>=0;
+
+box.innerHTML=
+"<h2>"+safeText(c.name)+"</h2>"+
+"<p>Regions: "+c.regions.length+"</p>"+
+"<p>Money: "+c.money+"</p>"+
+"<p>Technology: "+c.technology+"</p>"+
+"<p>Defence: "+c.defence+"</p>"+
+"<p>Alliance: "+(allied?"Yes":"No")+"</p>";
+
+if(c.owner==="ai"){
+
+box.innerHTML+=
+'<button onclick="trade()">Trade (50 money)</button>'+
+'<button onclick="alliance()">Propose Alliance (10 influence)</button>'+
+'<button onclick="declareWar()">Declare War (100 money + 10 influence)</button>';
+
+}
+
+}
+
+
+/* TRADE */
+
+function trade(){
+
+playerAction(function(g,me){
+
+var c=g.countries[selectedCountry];
+
+if(!c||c.owner!=="ai"||me.money<50||me.traded){
+
+addLog(g,"Trade unavailable.");
+return;
+
+}
+
+me.money-=50;
+me.money+=90;
+
+me.relation[c.name]=(me.relation[c.name]||0)+5;
+me.traded=true;
+
+addLog(g,"Trade with "+c.name+" succeeded.");
+
+});
+
+}
+
+
+/* ALLIANCE */
+
+function alliance(){
+
+playerAction(function(g,me){
+
+var c=g.countries[selectedCountry];
+
+if(!c||c.owner!=="ai"||me.influence<10||
+me.allies.indexOf(c.name)>=0){
+
+addLog(g,"Alliance unavailable.");
+return;
+
+}
+
+me.influence-=10;
+
+var relation=me.relation[c.name]||0;
+var chance=Math.max(10,Math.min(90,50+relation));
+
+if(Math.random()*100<chance){
+
+me.allies.push(c.name);
+me.relation[c.name]=relation+15;
+
+addLog(g,c.name+" accepted your alliance.");
+
+}else{
+
+me.relation[c.name]=relation-5;
+
+addLog(g,c.name+" rejected your alliance.");
+
+}
+
+});
+
+}
+
+
+/* WAR DECLARATION */
+
+function declareWar(){
+
+playerAction(function(g,me){
+
+var c=g.countries[selectedCountry];
+
+if(!c||c.owner!=="ai"||g.war||
+me.money<100||me.influence<10||
+me.allies.indexOf(c.name)>=0){
+
+addLog(g,"War cannot be declared.");
+return;
+
+}
+
+me.money-=100;
+me.influence-=10;
+
+g.war={
+attacker:me.name,
+target:c.name,
+turns:0,
+progress:0,
+last:"War has begun."
+};
+
+addLog(g,me.name+" declared war on "+c.name+".");
+
+});
+
+}
+
+
+/* WAR DISPLAY */
+
+function updateWarInfo(){
+
+var box=document.getElementById("warInfo");
+
+if(!game.war){
+
+box.innerHTML="<p>No active war.</p>";
+return;
+
+}
+
+var w=game.war;
+
+box.innerHTML=
+"<h2>"+safeText(w.attacker)+" vs. "+
+safeText(w.target)+"</h2>"+
+"<p>War turns: "+w.turns+"</p>"+
+"<p>War progress: "+w.progress+"</p>"+
+"<p>"+safeText(w.last)+"</p>"+
+'<button onclick="makePeace()">Sign Peace Treaty</button>';
+
+}
+
+
+/* PEACE TREATY */
+
+function makePeace(){
+
+playerAction(function(g,country){
+
+if(!g.war||g.war.attacker!==country.name)return;
+
+addLog(g,country.name+" signed a peace treaty with "+
+g.war.target+".");
+
+g.war=null;
+
+});
+
+}
+
+
+/* COUNTRY POWER */
+
+function countryPower(country){
+
+return country.money*0.12+
+country.regions.length*9+
+country.technology*18+
+country.defence*15;
+
+}
+
+
+/* AI DEVELOPMENT */
+
+function developCountries(g){
+
+for(var i=0;i<g.countries.length;i++){
+
+var c=g.countries[i];
+
+if(c.owner!=="ai")continue;
+
+if(Math.random()<0.65)c.money+=5;
+
+if(c.strategy==="economy"&&Math.random()<0.45){
+c.money+=5;
+}
+
+if(c.strategy==="defence"&&Math.random()<0.35){
+c.defence++;
+}
+
+if(Math.random()<0.12){
+c.technology++;
+}
+
+if(Math.random()<0.12&&c.regions.length<20){
+
+c.regions.push({
+name:"New Region "+(c.regions.length+1),
+population:500,
+development:1,
+income:12
+});
+
+}
+
+}
+
+}
+
+
+/* WAR ADVANCEMENT */
+
+function advanceWar(g){
+
+if(!g.war)return;
+
+var war=g.war;
+var attacker=null;
+var target=null;
+
+for(var i=0;i<g.countries.length;i++){
+
+if(g.countries[i].name===war.attacker){
+attacker=g.countries[i];
+}
+
+if(g.countries[i].name===war.target){
+target=g.countries[i];
+}
+
+}
+
+if(!attacker||!target){
+
+g.war=null;
+return;
+
+}
+
+war.turns++;
+
+var attackPower=
+countryPower(attacker)+(Math.random()*30-15);
+
+var defencePower=
+countryPower(target)+(Math.random()*30-15);
+
+if(attackPower>defencePower+8){
+
+war.progress++;
+war.last=attacker.name+" gained the advantage.";
+
+}else if(defencePower>attackPower+8){
+
+war.progress--;
+war.last=target.name+" gained the advantage.";
+
+}else{
+
+war.last="The sides are evenly matched.";
+
+}
+
+
+/* TERRITORY CHANGE EVERY THREE ROUNDS */
+
+if(war.turns%3===0){
+
+if(war.progress>=2&&target.regions.length>0){
+
+var captured=target.regions.pop();
+
+attacker.regions.push(captured);
+
+war.progress=0;
+
+addLog(g,attacker.name+" gained "+captured.name+
+" from "+target.name+".");
+
+}else if(war.progress<=-2&&attacker.regions.length>1){
+
+var lost=attacker.regions.pop();
+
+target.regions.push(lost);
+
+war.progress=0;
+
+addLog(g,attacker.name+" lost "+lost.name+".");
+
+}else{
+
+war.last+=" No territory changed hands.";
+
+}
+
+}
+
+
+/* CONQUEST */
+
+if(target.regions.length===0){
+
+target.owner="conquered";
+
+addLog(g,attacker.name+" conquered "+target.name+"!");
+
+g.war=null;
+
+}
+
+}
+
+
+/* END PLAYER TURN */
+
+function finishTurn(){
+
+if(!isMyTurn()){
+
+alert("It is not your turn.");
+return;
+
+}
+
+updateRoom(function(g){
+
+var country=g.countries[mySlot];
+
+country.money+=totalIncome(country);
+country.influence+=2;
+
+addLog(g,country.name+" finished its turn.");
+
+var next=(g.turnIndex+1)%4;
+
+/* THE FOURTH PLAYER ENDS THE ROUND */
+
+if(next===0){
+
+g.round++;
+
+developCountries(g);
+advanceWar(g);
+
+addLog(g,"A new round has begun. AI countries developed.");
+
+}
+
+g.turnIndex=next;
+
+});
+
+}
+
+
+/* SAVE STATUS */
+
+function saveRoom(){
+
+if(!roomRef){
+
+document.getElementById("saveStatus").textContent=
+"No active room.";
+
+return;
+
+}
+
+document.getElementById("saveStatus").textContent=
+"Your game is automatically synchronized with Firebase.";
+
+}
+
+
+/* STARTUP */
+
+initFirebase();
+loadWorldMap();
+
+</script>
+</body>
+</html>
